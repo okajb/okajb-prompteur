@@ -21,7 +21,7 @@ body.immersive{overflow:hidden}
 <main>
 <section id="library"><div class="card"><div class="row between"><div><h1>Ma bibliothèque</h1><p class="muted" id="songCount">Tes morceaux OKAJB</p></div><button class="primary" id="addSong">+ Ajouter</button></div><label class="field">Rechercher un titre<input id="search" placeholder="Ex. Grand dans ma tête" autocomplete="off"/></label><div class="songs" id="songs"></div></div>
 <div class="notice">🔒 Tes MP3 restent dans la mémoire locale de cet appareil. Ils ne sont jamais envoyés au site GitHub. Une mise à jour ou un nettoyage Safari peut effacer les données : conserve le fichier privé original et exporte une sauvegarde.</div>
-<div class="card stack" id="importPanel"><h2>📥 Installer ma musique</h2><p class="muted">Importe <strong>une seule fois</strong> le fichier privé <strong>OKAJB_BIBLIOTHEQUE_PRIVEE_13_TITRES.okajb</strong> depuis l’app Fichiers de l’iPhone. Les 13 textes et les 26 MP3 sont associés automatiquement. Prévoir au moins 300 Mo libres.</p>
+<div class="card stack" id="importPanel"><h2>📥 Installer ou réparer ma musique</h2><p class="muted">Importe ta bibliothèque complète une seule fois, ou répare un seul morceau avec un fichier privé <strong>.okajb</strong>. Seules les chansons présentes dans le fichier importé seront remplacées. Les autres restent intactes. Les MP3 ne quittent pas ton appareil.</p>
 <label class="filelink importLink" for="restore">📁 Choisir ma bibliothèque OKAJB (.okajb)</label><input id="restore" type="file" accept=".okajb,application/octet-stream,.json,application/json" class="visuallyHidden"/>
 <progress id="importProgress" max="14" value="0" class="importProgress hidden"></progress><p id="importStatus" class="muted" role="status" aria-live="polite">Aucun fichier privé envoyé sur Internet.</p>
 <div class="row"><button id="backup">⬇ Sauvegarder toute ma bibliothèque</button><button id="resetLibrary" class="destructive">🗑 Réinitialiser la bibliothèque</button></div></div></section>
@@ -39,5 +39,5 @@ body.immersive{overflow:hidden}
 <button id="rememberTiming">💾 Mémoriser ces réglages pour ce titre</button>
 <div class="tip">🎙️ Chaque version audio a ses propres réglages de défilement. Ils suivent la position de l'audio, mais ne sont pas automatiquement synchronisés mot à mot. Ajuste le début et la durée pour chaque version.</div><div class="tip">🎧 Pour filmer, utilise des écouteurs. L’application essaie d’inclure musique et micro dans la vidéo ; sur certains iPhone, seul le micro sera présent. Vérifie l'aperçu avant d'enregistrer dans Photos.</div><div class="tip">🔴 Le prompteur n'apparaît pas sur la vidéo enregistrée : il sert seulement à guider ta prestation.</div>
 </div></div></section>
-</main><footer class="muted" style="text-align:center;padding:22px">OKAJB PROMPTEUR · V1.8 · Aucun compte · Aucun abonnement</footer></div>
+</main><footer class="muted" style="text-align:center;padding:22px">OKAJB PROMPTEUR · V1.9 · Aucun compte · Aucun abonnement</footer></div>
 <script src="app.js"></script></body></html>

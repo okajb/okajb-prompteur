@@ -115,7 +115,10 @@ function useTrackURL(){if(objectAudioURL){URL.revokeObjectURL(objectAudioURL);ob
 async function openSong(id){await stopEverything();current=await get(id);if(!current)return;mode=hasAudio(current,'instrumental')?'instrumental':hasAudio(current,'full')?'full':'instrumental';show('studio');$('studioTitle').textContent=current.title;$('readerText').textContent=current.lyrics||'Ajoute les paroles de cette chanson dans « Modifier ». ';selectMode(mode);writeStatus('Choisis ton mode, puis « Répéter » ou « Filmer ».')}
 function selectMode(next){if(recording||counting)return;stopPlaying();mode=next;useTrackURL();$('chooseInstru').classList.toggle('active',mode==='instrumental');$('chooseVoix').classList.toggle('active',mode==='full');
  $('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');
- $('modeInfo').textContent=hasAudio(current,mode)?(mode==='instrumental'?'🎧 Instrumental avec backs':'🎵 Version complète avec voix'):'Audio manquant : ouvre « Modifier » pour importer le fichier.';
+ const sourceFile=mode==='instrumental'?current?.instrumentalFile:current?.fullFile;
+ const sourceName=mode==='instrumental'?current?.instrumentalName:current?.fullName;
+ const label=mode==='instrumental'?'🎧 Instrumental + backs':'🎵 Chanson complète avec voix';
+ $('modeInfo').textContent=hasAudio(current,mode)?label+' · Fichier : '+(sourceName||sourceFile?.name||'audio enregistré')+(sourceFile instanceof Blob?' ('+(sourceFile.size/1048576).toFixed(1)+' Mo)':''):'Audio manquant : ouvre « Modifier » pour importer le fichier.';
  const [a,b]=timingKeys(mode);$('start').value=Math.min(120,current[a]||0);$('duration').value=Math.min(600,current[b]||60);updateLabels();updateReader(0);$('play').disabled=!hasAudio(current,mode);$('record').disabled=!hasAudio(current,mode)||!current.lyrics}
 function seconds(){const audio=$('songPlayer');return hasAudio(current,mode)&&Number.isFinite(audio.currentTime)?audio.currentTime:(performance.now()-clockStarted)/1000+timeBefore}
 let dragOffset=0, drag=null, readerY=0;
@@ -347,7 +350,8 @@ async function restorePrivate(file){
     uiImport('Lecture de la bibliothèque privée…',0);
     const {manifest,payload}=await decodePrivate(file);
     const songs=manifest.songs;
-    if(!confirm('Importer '+songs.length+' titres, leurs paroles et leurs MP3 sur cet appareil ? Les titres existants seront remplacés.')){uiImport('Import annulé.',-1);return}
+    const message=songs.length===1?'Réparer le titre « '+songs[0].title+' » avec les deux bons MP3 ? Les autres chansons resteront intactes.':'Importer '+songs.length+' titres ? Seuls ces titres seront remplacés, pas les autres.';
+    if(!confirm(message)){uiImport('Import annulé.',-1);return}
     if(navigator.storage?.estimate){const estimate=await navigator.storage.estimate();const available=estimate.quota-estimate.usage;
       if(Number.isFinite(available)&&available<file.size*1.05&&!confirm('Espace de stockage local potentiellement insuffisant ('+Math.round(available/1048576)+' Mo estimés). Essayer quand même ?')){uiImport('Import annulé.',-1);return}
     }
@@ -357,14 +361,28 @@ async function restorePrivate(file){
       const s={...previous,id:item.id,title:item.title,lyrics:item.lyrics,offsetInstrumental:Number(item.offsetInstrumental)||0,offsetFull:Number(item.offsetFull)||0,durationInstrumental:Number(item.durationInstrumental)||60,durationFull:Number(item.durationFull)||60,updated:Date.now()};
       for(const [key,field] of [['instrumental','instrumentalFile'],['full','fullFile']]){
         const tr=item.tracks?.[key];
-        if(tr){s[field]=file.slice(payload+tr.offset,payload+tr.offset+tr.size,'audio/mpeg');s[key+'Name']=tr.name||item.id+'-'+key+'.mp3';}
+        if(tr){
+          // Independent Blob avoids retaining a slice of a 200 MB file in iOS IndexedDB.
+          const raw=await file.slice(payload+tr.offset,payload+tr.offset+tr.size).arrayBuffer();
+          if(raw.byteLength!==tr.size)throw Error('MP3 incomplet pour '+item.title+' ('+key+').');
+          if(tr.sha256){
+            if(!/^[a-f0-9]{64}$/i.test(tr.sha256))throw Error('Empreinte MP3 non valide.');
+            if(!crypto.subtle?.digest)throw Error('Vérification du fichier impossible sur ce navigateur.');
+            const fingerprint=await crypto.subtle.digest('SHA-256',raw);
+            const hex=Array.from(new Uint8Array(fingerprint)).map(x=>x.toString(16).padStart(2,'0')).join('');
+            if(hex!==tr.sha256.toLowerCase())throw Error('Mauvais fichier audio pour '+item.title+' ('+key+'). Aucun remplacement effectué.');
+            s[key+'Sha256']=hex;
+          } else s[key+'Sha256']=null;
+          s[field]=new Blob([raw],{type:'audio/mpeg'});
+          s[key+'Name']=tr.name||item.id+'-'+key+'.mp3';
+        }
       }
       s.instrumentalUrl='';s.fullUrl='';
       try{await put(s)}catch(err){throw Error('Enregistrement impossible après '+n+' titres (mémoire insuffisante ?) : '+err.message)}
       n++;uiImport('Import '+n+'/'+songs.length+' : '+item.title,n);
       await new Promise(resolve=>setTimeout(resolve,0));
     }
-    await renderSongs();const ready=(await getAll()).filter(s=>s.lyrics&&hasAudio(s,'instrumental')&&hasAudio(s,'full')).length;uiImport('✅ '+ready+' chansons complètes disponibles. Écoute ton jazz reste en attente. Tes fichiers restent privés.',n);
+    await renderSongs();const ready=(await getAll()).filter(s=>s.lyrics&&hasAudio(s,'instrumental')&&hasAudio(s,'full')).length;uiImport(songs.length===1?'✅ « '+songs[0].title+' » réparée avec ses deux pistes vérifiées. Les autres chansons sont conservées.':'✅ '+ready+' chansons complètes disponibles. Tes fichiers restent privés.',n);
     try{await navigator.storage?.persist?.()}catch{};
   }catch(e){uiImport('❌ Échec : '+e.message,-1);console.error(e)}
 }
