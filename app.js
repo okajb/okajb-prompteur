@@ -177,6 +177,7 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
  if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(blob);const ext=type.includes('webm')?'webm':'mp4',fileName=(current?.title||'OKAJB').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_')+'_'+Date.now()+'.'+ext;
  const out=$('videoOutput');out.innerHTML='';const preview=document.createElement('video');preview.controls=true;preview.playsInline=true;preview.src=videoURL;out.append(preview);const link=document.createElement('a');link.href=videoURL;link.download=fileName;link.textContent='⬇ Télécharger la vidéo';out.append(link);
  const share=document.createElement('button');share.textContent='Partager / Enregistrer dans Photos';share.onclick=async()=>{try{const f=new File([blob],fileName,{type});if(navigator.canShare?.({files:[f]}))await navigator.share({files:[f],title:fileName});else writeStatus('Utilise « Télécharger la vidéo », puis partage-la vers Photos.')}catch(e){if(e.name!=='AbortError')writeStatus('Partage indisponible : '+e.message)}};out.append(share);writeStatus('Vidéo prête : regarde l’aperçu et contrôle le son et l’orientation.');}
+ const saveVideoOnStop=recorder.onstop;
  try{recorder.start(800)}catch(e){
   if(zoomCaptureActive){
    stopZoomCapture();setCameraZoom(1);
@@ -186,7 +187,7 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
     recorder=rec;recChunks=[];
     rec.ondataavailable=e=>{if(e.data?.size)recChunks.push(e.data)};
     rec.onerror=e=>writeStatus('Erreur vidéo : '+(e.error?.message||'inconnue'));
-    rec.onstop=async()=>{await releaseMixer();writeStatus('Vidéo brute enregistrée sans zoom : refais la prise si tu as besoin de zoomer.');};
+    rec.onstop=saveVideoOnStop;
     rec.start(800);
     writeStatus('Le zoom enregistré est indisponible dans ce navigateur : vidéo enregistrée sans zoom.');
    }catch(err){writeStatus('Enregistrement impossible : '+err.message);await releaseMixer();return}
