@@ -10,6 +10,23 @@ let recorder=null,recChunks=[],recCtx=null,recDest=null,recSource=null,recMic=nu
 let objectAudioURL=null,videoURL=null,raf=null,clockStarted=0,timeBefore=0,playing=false,skipRecordStop=false;
 let uploadedRemoved={instrumental:false,full:false};
 let cameraZoom=1,zoomPointers=new Map(),zoomPinch=null,zoomCanvas=null,zoomCanvasStream=null,zoomDrawFrame=0,zoomCaptureActive=false,zoomRecordingSupported=true;
+let videoFormat='portrait',recordedFormat='portrait';
+function updateCameraFrame(){
+ const stage=$('stage'),frame=$('cameraFrame');if(!stage||!frame||!stage.clientWidth||!stage.clientHeight)return;
+ const ratio=videoFormat==='landscape'?16/9:9/16,w=Math.min(stage.clientWidth,stage.clientHeight*ratio);
+ frame.style.width=Math.round(w)+'px';frame.style.height=Math.round(w/ratio)+'px';
+}
+function selectVideoFormat(format){
+ if(recording||counting)return;
+ videoFormat=format==='landscape'?'landscape':'portrait';
+ $('formatPortrait').classList.toggle('active',videoFormat==='portrait');
+ $('formatLandscape').classList.toggle('active',videoFormat==='landscape');
+ $('formatToggle').textContent=videoFormat==='portrait'?'📱 9:16':'▭ 16:9';
+ $('formatToggle').setAttribute('aria-label','Format '+(videoFormat==='portrait'?'vertical 9 sur 16':'paysage 16 sur 9')+'. Toucher pour changer.');
+ updateCameraFrame();
+}
+window.addEventListener('resize',updateCameraFrame);
+if(typeof ResizeObserver!=='undefined')new ResizeObserver(updateCameraFrame).observe($('stage'));
 function setCameraZoom(value){
  if(recording&&!zoomCaptureActive)return;
  cameraZoom=Math.min(3,Math.max(1,Number(value)||1));
@@ -24,26 +41,25 @@ function pinchDistance(){
 function startZoomCapture(){
  const video=$('cameraPreview');
  if(typeof HTMLCanvasElement==='undefined'||!HTMLCanvasElement.prototype.captureStream||video.readyState<2||!video.videoWidth||!video.videoHeight)return null;
- const canvas=document.createElement('canvas'),w=video.videoWidth,h=video.videoHeight,scale=Math.min(1,1280/Math.max(w,h));
- canvas.width=Math.max(2,Math.round(w*scale));canvas.height=Math.max(2,Math.round(h*scale));
- const ctx=canvas.getContext('2d',{alpha:false});
- if(!ctx)return null;
+ const canvas=document.createElement('canvas');
+ if(videoFormat==='portrait'){canvas.width=720;canvas.height=1280}
+ else{canvas.width=1280;canvas.height=720}
+ const ctx=canvas.getContext('2d',{alpha:false});if(!ctx)return null;
  zoomCanvas=canvas;
  const draw=()=>{
   if(!zoomCanvas)return;
   if(video.readyState>=2){
-   const factor=Math.max(1,cameraZoom),cropW=w/factor,cropH=h/factor;
+   const w=video.videoWidth,h=video.videoHeight,r=canvas.width/canvas.height;
+   let cropW=Math.min(w,h*r),cropH=cropW/r;
+   const zoom=Math.max(1,cameraZoom);cropW/=zoom;cropH/=zoom;
    try{ctx.drawImage(video,(w-cropW)/2,(h-cropH)/2,cropW,cropH,0,0,canvas.width,canvas.height)}catch{}
   }
   zoomDrawFrame=requestAnimationFrame(draw);
  };
  draw();
- try{
-  zoomCanvasStream=canvas.captureStream(24);
-  const track=zoomCanvasStream.getVideoTracks()[0];
+ try{zoomCanvasStream=canvas.captureStream(24);const track=zoomCanvasStream.getVideoTracks()[0];
   if(!track){stopZoomCapture();return null}
-  zoomCaptureActive=true;
-  return track;
+  zoomCaptureActive=true;return track;
  }catch(e){stopZoomCapture();return null}
 }
 function stopZoomCapture(){
@@ -108,6 +124,7 @@ function setImmersive(on){
  const button=$('expandStage');
  if(button){button.textContent=on?'↙ Réduire':'⛶ Plein écran';button.setAttribute('aria-pressed',String(on))}
  if(current)updateReader($('songPlayer').currentTime||0);
+ requestAnimationFrame(updateCameraFrame);
 }
 const reader=document.querySelector('#stage .reader');
 reader.onpointerdown=e=>{
@@ -138,6 +155,9 @@ reader.onpointerup=endZoomPointer;
 reader.onpointercancel=endZoomPointer;
 reader.onlostpointercapture=endZoomPointer;
 $('zoomReset').onclick=()=>setCameraZoom(1);
+$('formatPortrait').onclick=()=>selectVideoFormat('portrait');
+$('formatLandscape').onclick=()=>selectVideoFormat('landscape');
+$('formatToggle').onclick=()=>selectVideoFormat(videoFormat==='portrait'?'landscape':'portrait');
 if($('expandStage'))$('expandStage').onclick=()=>setImmersive(!document.body.classList.contains('immersive'));
 function updateReader(t){if(!current)return;const el=$('readerText'),stage=$('stage');const offset=Number($('start').value),duration=Math.max(1,Number($('duration').value)),p=Math.max(0,Math.min(1,(t-offset)/duration));const height=stage.clientHeight,travel=Math.max(0,el.scrollHeight-height*.52);const base=height*.30-p*travel;
  readerY=Math.max(height*.30-travel,Math.min(height*.30,drag?drag.origin+drag.delta:base+dragOffset));
@@ -158,8 +178,9 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
  try{recCtx=new(window.AudioContext||window.webkitAudioContext)();await recCtx.resume();recDest=recCtx.createMediaStreamDestination();recMic=recCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));recMic.connect(recDest);
  const audio=$('songPlayer');recSource=recCtx.createMediaElementSource(audio);recSource.connect(recDest);recSource.connect(recCtx.destination);audioTracks=recDest.stream.getAudioTracks()}
  catch(e){writeStatus('Mode de secours : le micro seul sera enregistré. '+e.message);audioTracks=stream.getAudioTracks()}
+ recordedFormat=videoFormat;
  let videoTrack=startZoomCapture();
- if(!videoTrack){setCameraZoom(1);writeStatus('Zoom pendant la vidéo indisponible sur ce navigateur : enregistrement en cadrage normal (1×).');}
+ if(!videoTrack){setCameraZoom(1);writeStatus('Attention : enregistrement au format natif de la caméra, Safari ne permet pas le format vidéo sélectionné.');}
  const m=mime(),recordOptions=m?{mimeType:m,videoBitsPerSecond:3500000}:undefined;
  let rec=null;
  try{
@@ -175,7 +196,12 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
  recorder.onerror=e=>writeStatus('Erreur vidéo : '+(e.error?.message||'inconnue'));
  recorder.onstop=async()=>{const type=rec.mimeType||'video/mp4';const blob=new Blob(recChunks,{type});await releaseMixer();if(!blob.size){writeStatus('Aucune vidéo enregistrée. Réessaie.');return}
  if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(blob);const ext=type.includes('webm')?'webm':'mp4',fileName=(current?.title||'OKAJB').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_')+'_'+Date.now()+'.'+ext;
- const out=$('videoOutput');out.innerHTML='';const preview=document.createElement('video');preview.controls=true;preview.playsInline=true;preview.src=videoURL;out.append(preview);const link=document.createElement('a');link.href=videoURL;link.download=fileName;link.textContent='⬇ Télécharger la vidéo';out.append(link);
+ const out=$('videoOutput');out.innerHTML='';const preview=document.createElement('video');preview.controls=true;preview.playsInline=true;preview.src=videoURL;out.append(preview);
+ const videoMeta=document.createElement('p');videoMeta.className='muted';videoMeta.textContent='Vérification du format…';out.append(videoMeta);
+ preview.addEventListener('loadedmetadata',()=>{
+  const w=preview.videoWidth,h=preview.videoHeight,portrait=h>w,ok=recordedFormat==='portrait'?portrait:w>h;
+  videoMeta.textContent='Vidéo : '+w+' × '+h+' ('+(portrait?'vertical':'paysage')+'). '+(ok?'✓ Format conforme.':'⚠ Safari n’a pas respecté le format demandé.');
+ });const link=document.createElement('a');link.href=videoURL;link.download=fileName;link.textContent='⬇ Télécharger la vidéo';out.append(link);
  const share=document.createElement('button');share.textContent='Partager / Enregistrer dans Photos';share.onclick=async()=>{try{const f=new File([blob],fileName,{type});if(navigator.canShare?.({files:[f]}))await navigator.share({files:[f],title:fileName});else writeStatus('Utilise « Télécharger la vidéo », puis partage-la vers Photos.')}catch(e){if(e.name!=='AbortError')writeStatus('Partage indisponible : '+e.message)}};out.append(share);writeStatus('Vidéo prête : regarde l’aperçu et contrôle le son et l’orientation.');}
  const saveVideoOnStop=recorder.onstop;
  try{recorder.start(800)}catch(e){
@@ -193,13 +219,13 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
    }catch(err){writeStatus('Enregistrement impossible : '+err.message);await releaseMixer();return}
   }else{writeStatus('Enregistrement impossible : '+e.message);await releaseMixer();return}
  }
- recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek'])$(id).disabled=true;
+ recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle'])$(id).disabled=true;
  if(!await play()){writeStatus('La caméra enregistre, mais la musique ne démarre pas. Arrête et recommence.')}
 }
 async function releaseMixer(){stopZoomCapture();try{await recCtx?.close()}catch{}recCtx=recDest=recSource=recMic=recStream=null;
  // On Safari, createMediaElementSource() can only be called once per element.
  const old=$('songPlayer'),fresh=old.cloneNode(false);fresh.id='songPlayer';fresh.preload='metadata';old.replaceWith(fresh);fresh.onended=()=>{if(!recording)stopPlaying()};fresh.onloadedmetadata=()=>updateReader(0);if(current)useTrackURL()}
-async function stopRecording(){if(!recording)return;recording=false;if(recorder?.state!=='inactive')recorder.stop();$('recFlag').textContent='PRÊT';$('recFlag').classList.remove('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek'])$(id).disabled=false;if(current){$('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');$('record').disabled=!hasAudio(current,mode)||!current.lyrics}}
+async function stopRecording(){if(!recording)return;recording=false;if(recorder?.state!=='inactive')recorder.stop();$('recFlag').textContent='PRÊT';$('recFlag').classList.remove('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle'])$(id).disabled=false;if(current){$('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');$('record').disabled=!hasAudio(current,mode)||!current.lyrics}}
 async function stopAll(){setImmersive(false);counting=false;await stopRecording();stopPlaying()}
 // Private container v1: "OKAJB1\n" + uint32BE(JSON manifest length) + JSON + raw audio blobs.
 // The catalogue on GitHub contains only public song titles. Local audio never goes through fetch().
@@ -302,6 +328,6 @@ $('seek').oninput=e=>{if(!recording&&current){$('songPlayer').currentTime=Number
 for(const id of ['fontSize','start','duration','volume'])$(id).oninput=updateLabels;
 $('rememberTiming').onclick=async()=>{if(!current)return;const[a,b]=timingKeys(mode);current[a]=Number($('start').value);current[b]=Number($('duration').value);await put(current);writeStatus('Réglage mémorisé pour cette version audio.')};
 $('backup').onclick=makeBackup;$('resetLibrary').onclick=resetLibrary;$('restore').onchange=async e=>{await restorePrivate(e.target.files[0]);e.target.value=''};
-async function init(){db=await openDB();try{await loadCatalog()}catch(e){console.warn('Catalogue:',e.message)}$('fontSize').value=36;updateLabels();await renderSongs();
+async function init(){db=await openDB();try{await loadCatalog()}catch(e){console.warn('Catalogue:',e.message)}$('fontSize').value=36;updateLabels();selectVideoFormat('portrait');await renderSongs();
  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(console.warn);setTimeout(()=>$('splash')?.remove(),1600)}
 init().catch(e=>{console.error(e);alert('Impossible d’ouvrir OKAJB Prompteur : '+e.message)});
