@@ -32,7 +32,7 @@ async function loadCatalog(){
  }
  }
 }
-function show(which){for(const key of ['library','editor','studio'])$(key).classList.toggle('hidden',key!==which);$('navLibrary').classList.toggle('active',which!=='studio');$('navStudio').classList.toggle('active',which==='studio');window.scrollTo(0,0)}
+function show(which){setImmersive(false);for(const key of ['library','editor','studio'])$(key).classList.toggle('hidden',key!==which);$('navLibrary').classList.toggle('active',which!=='studio');$('navStudio').classList.toggle('active',which==='studio');window.scrollTo(0,0)}
 async function renderSongs(){const all=await getAll(),search=$('search').value.toLocaleLowerCase('fr').trim();all.sort((a,b)=>(a.updated||0)===(b.updated||0)?a.title.localeCompare(b.title,'fr'):(b.updated||0)-(a.updated||0));
  const list=all.filter(s=>s.title.toLocaleLowerCase('fr').includes(search));$('songCount').textContent=all.length+' chansons · '+all.filter(s=>s.lyrics&&hasAudio(s,'instrumental')&&hasAudio(s,'full')).length+' entièrement prêtes';
  $('songs').innerHTML=list.map(s=>`<div class="song"><div class="songinfo"><div class="songname">${escapeHTML(s.title)}</div><div class="songmeta">${s.lyrics?'✓ Paroles':'○ Paroles à ajouter'} · ${hasAudio(s,'instrumental')?'✓ Instru':'○ Instru'} · ${hasAudio(s,'full')?'✓ Voix':'○ Voix'}</div></div><div class="songbtns"><button class="primary" data-action="open" data-id="${escapeHTML(s.id)}">▶ Ouvrir</button><button data-action="edit" data-id="${escapeHTML(s.id)}">✎</button><button data-action="delete" data-id="${escapeHTML(s.id)}">✕</button></div></div>`).join('')||'<p class="muted">Aucun titre trouvé.</p>';
@@ -59,14 +59,37 @@ function selectMode(next){if(recording||counting)return;stopPlaying();mode=next;
  $('modeInfo').textContent=hasAudio(current,mode)?(mode==='instrumental'?'🎧 Instrumental avec backs':'🎵 Version complète avec voix'):'Audio manquant : ouvre « Modifier » pour importer le fichier.';
  const [a,b]=timingKeys(mode);$('start').value=Math.min(120,current[a]||0);$('duration').value=Math.min(600,current[b]||60);updateLabels();updateReader(0);$('play').disabled=!hasAudio(current,mode);$('record').disabled=!hasAudio(current,mode)||!current.lyrics}
 function seconds(){const audio=$('songPlayer');return hasAudio(current,mode)&&Number.isFinite(audio.currentTime)?audio.currentTime:(performance.now()-clockStarted)/1000+timeBefore}
-function updateReader(t){if(!current)return;const el=$('readerText'),stage=$('stage');const offset=Number($('start').value),duration=Math.max(1,Number($('duration').value)),p=Math.max(0,Math.min(1,(t-offset)/duration));const height=stage.clientHeight,travel=Math.max(0,el.scrollHeight-height*.52);el.style.transform=`translateY(${height*.30-p*travel}px)`;
+let dragOffset=0, drag=null, readerY=0;
+function setImmersive(on){
+ document.body.classList.toggle('immersive',on);
+ const button=$('expandStage');
+ if(button){button.textContent=on?'↙ Réduire':'⛶ Plein écran';button.setAttribute('aria-pressed',String(on))}
+ if(current)updateReader($('songPlayer').currentTime||0);
+}
+const reader=document.querySelector('#stage .reader');
+reader.onpointerdown=e=>{
+ if(!e.isPrimary)return;
+ reader.setPointerCapture(e.pointerId);
+ drag={id:e.pointerId,start:e.clientY,origin:readerY,delta:0};
+};
+reader.onpointermove=e=>{
+ if(!drag||drag.id!==e.pointerId)return;
+ drag.delta=e.clientY-drag.start;
+ updateReader($('songPlayer').currentTime||0);
+};
+reader.onlostpointercapture=()=>{drag=null};
+if($('expandStage'))$('expandStage').onclick=()=>setImmersive(!document.body.classList.contains('immersive'));
+function updateReader(t){if(!current)return;const el=$('readerText'),stage=$('stage');const offset=Number($('start').value),duration=Math.max(1,Number($('duration').value)),p=Math.max(0,Math.min(1,(t-offset)/duration));const height=stage.clientHeight,travel=Math.max(0,el.scrollHeight-height*.52);const base=height*.30-p*travel;
+ readerY=Math.max(height*.30-travel,Math.min(height*.30,drag?drag.origin+drag.delta:base+dragOffset));
+ if(drag)dragOffset=readerY-base;
+ el.style.transform=`translateY(${readerY}px)`;
  const audio=$('songPlayer'),end=Number.isFinite(audio.duration)&&audio.duration>0?audio.duration:offset+duration;$('clock').textContent=fmt(t)+' / '+fmt(end);$('seek').max=end;$('seek').value=Math.min(t,end)}
 function updateLabels(){$('fontText').textContent=$('fontSize').value+' px';$('startText').textContent=$('start').value+' s';$('durationText').textContent=$('duration').value+' s';$('volumeText').textContent=$('volume').value+' %';$('readerText').style.fontSize=$('fontSize').value+'px';$('songPlayer').volume=Number($('volume').value)/100;if(!playing)updateReader($('songPlayer').currentTime||0)}
 function animate(){if(!playing)return;updateReader(seconds());raf=requestAnimationFrame(animate)}
 async function play(){if(!current||!hasAudio(current,mode)){writeStatus('Il manque l’audio de ce mode.');return false}if(playing)return true;const audio=$('songPlayer');try{await audio.play()}catch(e){writeStatus('Lecture impossible : '+e.message);return false}playing=true;clockStarted=performance.now();$('play').textContent='❚❚ Pause';raf=requestAnimationFrame(animate);return true}
 function pause(){if(!playing)return;timeBefore=seconds();playing=false;cancelAnimationFrame(raf);$('songPlayer').pause();$('play').textContent='▶ Reprendre'}
-function stopPlaying(){playing=false;cancelAnimationFrame(raf);const audio=$('songPlayer');audio.pause();try{audio.currentTime=0}catch{}timeBefore=0;$('play').textContent='▶ Répéter';updateReader(0)}
-async function camera(){if(!navigator.mediaDevices?.getUserMedia){writeStatus('Caméra indisponible : cette application doit être ouverte en HTTPS.');return false}try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1080},height:{ideal:1920}},audio:{echoCancellation:true,noiseSuppression:true}});$('cameraPreview').srcObject=stream;$('placeholder').classList.add('hidden');$('stage').classList.toggle('rear',facing==='environment');$('camToggle').textContent='📷 Caméra active';return true}catch(e){writeStatus('Autorise caméra et micro sur ton iPhone : '+e.message);return false}}
+function stopPlaying(){dragOffset=0;drag=null;playing=false;cancelAnimationFrame(raf);const audio=$('songPlayer');audio.pause();try{audio.currentTime=0}catch{}timeBefore=0;$('play').textContent='▶ Répéter';updateReader(0)}
+async function camera(){if(!navigator.mediaDevices?.getUserMedia){writeStatus('Caméra indisponible : cette application doit être ouverte en HTTPS.');return false}try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1080},height:{ideal:1920}},audio:{echoCancellation:true,noiseSuppression:true}});$('cameraPreview').srcObject=stream;$('placeholder').classList.add('hidden');$('stage').classList.toggle('rear',facing==='environment');$('camToggle').textContent='📷 Caméra active';setImmersive(true);return true}catch(e){writeStatus('Autorise caméra et micro sur ton iPhone : '+e.message);return false}}
 async function counter(){counting=true;for(let n=Number($('countdown').value);n>0;n--){writeStatus('Départ dans '+n+'…');await new Promise(r=>setTimeout(r,1000));if(!counting)return false}counting=false;return true}
 function mime(){if(!window.MediaRecorder)return'';for(const s of ['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'])if(MediaRecorder.isTypeSupported(s))return s;return''}
 async function startRecording(){if(recording||counting||!current||!hasAudio(current,mode)){writeStatus('Ajoute les fichiers audio avant de filmer.');return}
@@ -89,7 +112,7 @@ async function releaseMixer(){try{await recCtx?.close()}catch{}recCtx=recDest=re
  // On Safari, createMediaElementSource() can only be called once per element.
  const old=$('songPlayer'),fresh=old.cloneNode(false);fresh.id='songPlayer';fresh.preload='metadata';old.replaceWith(fresh);fresh.onended=()=>{if(!recording)stopPlaying()};fresh.onloadedmetadata=()=>updateReader(0);if(current)useTrackURL()}
 async function stopRecording(){if(!recording)return;recording=false;if(recorder?.state!=='inactive')recorder.stop();$('recFlag').textContent='PRÊT';$('recFlag').classList.remove('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek'])$(id).disabled=false;if(current){$('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');$('record').disabled=!hasAudio(current,mode)||!current.lyrics}}
-async function stopAll(){counting=false;await stopRecording();stopPlaying()}
+async function stopAll(){setImmersive(false);counting=false;await stopRecording();stopPlaying()}
 // Private container v1: "OKAJB1\n" + uint32BE(JSON manifest length) + JSON + raw audio blobs.
 // The catalogue on GitHub contains only public song titles. Local audio never goes through fetch().
 const PRIVATE_MAGIC='OKAJB1\n';
@@ -134,7 +157,7 @@ async function restorePrivate(file){
       const s={...previous,id:item.id,title:item.title,lyrics:item.lyrics,offsetInstrumental:Number(item.offsetInstrumental)||0,offsetFull:Number(item.offsetFull)||0,durationInstrumental:Number(item.durationInstrumental)||60,durationFull:Number(item.durationFull)||60,updated:Date.now()};
       for(const [key,field] of [['instrumental','instrumentalFile'],['full','fullFile']]){
         const tr=item.tracks?.[key];
-        if(tr){s[field]=file.slice(payload+tr.offset,payload+tr.offset+tr.size,'audio/mpeg');s[key+'Name']=tr.name||item.id+'-'+key+'.mp3';}
+        if(tr){s[field]=new Blob([await file.slice(payload+tr.offset,payload+tr.offset+tr.size).arrayBuffer()],{type:'audio/mpeg'});s[key+'Name']=tr.name||item.id+'-'+key+'.mp3';}
       }
       s.instrumentalUrl='';s.fullUrl='';
       try{await put(s)}catch(err){throw Error('Enregistrement impossible après '+n+' titres (mémoire insuffisante ?) : '+err.message)}
