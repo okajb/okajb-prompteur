@@ -1,0 +1,131 @@
+{
+  "version": 4,
+  "songs": [
+    {
+      "id": "grand-dans-ma-tete",
+      "title": "Grand dans ma tête",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 283,
+      "durationFull": 317,
+      "lyrics": ""
+    },
+    {
+      "id": "lessentiel",
+      "title": "L’essentiel",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 175,
+      "durationFull": 175,
+      "lyrics": ""
+    },
+    {
+      "id": "ha-la-chatte",
+      "title": "Ha la chatte !",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 206,
+      "durationFull": 206,
+      "lyrics": ""
+    },
+    {
+      "id": "les-potes",
+      "title": "Les potes",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 171,
+      "durationFull": 171,
+      "lyrics": ""
+    },
+    {
+      "id": "elle",
+      "title": "Elle",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 128,
+      "durationFull": 128,
+      "lyrics": ""
+    },
+    {
+      "id": "entier-pose-vrai",
+      "title": "Entier. Posé. Vrai. C’est tout.",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 258,
+      "durationFull": 258,
+      "lyrics": ""
+    },
+    {
+      "id": "picasso-mon-frere",
+      "title": "PICASSO – Mon frère",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 175,
+      "durationFull": 175,
+      "lyrics": ""
+    },
+    {
+      "id": "bouffe-le-vent",
+      "title": "Bouffe le vent",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 253,
+      "durationFull": 253,
+      "lyrics": ""
+    },
+    {
+      "id": "nos-moments",
+      "title": "Nos moments",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 204,
+      "durationFull": 204,
+      "lyrics": ""
+    },
+    {
+      "id": "la-force",
+      "title": "La force",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 189,
+      "durationFull": 189,
+      "lyrics": ""
+    },
+    {
+      "id": "mes-petits-soldats",
+      "title": "Mes petits soldats",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 125,
+      "durationFull": 125,
+      "lyrics": ""
+    },
+    {
+      "id": "7-jours",
+      "title": "7 jours",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 170,
+      "durationFull": 170,
+      "lyrics": ""
+    },
+    {
+      "id": "on-ne-se-prend-pas-la-tete",
+      "title": "On ne se prend pas la tête",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 261,
+      "durationFull": 261,
+      "lyrics": ""
+    },
+    {
+      "id": "ecoute-ton-jazz",
+      "title": "Écoute ton jazz",
+      "lyrics": "",
+      "offsetInstrumental": 0,
+      "offsetFull": 0,
+      "durationInstrumental": 60,
+      "durationFull": 60
+    }
+  ]
+}
