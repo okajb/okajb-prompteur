@@ -10,7 +10,7 @@ let recorder=null,recChunks=[],recCtx=null,recDest=null,recSource=null,recMic=nu
 let objectAudioURL=null,videoURL=null,raf=null,clockStarted=0,timeBefore=0,playing=false,skipRecordStop=false;
 let uploadedRemoved={instrumental:false,full:false};
 let cameraZoom=1,zoomPointers=new Map(),zoomPinch=null,zoomCanvas=null,zoomCanvasStream=null,zoomDrawFrame=0,zoomCaptureActive=false,zoomRecordingSupported=true;
-let videoFormat='portrait',recordedFormat='portrait';
+let videoFormat='portrait',recordedFormat='portrait',pendingVideoBlob=null,pendingVideoURL=null;
 function updateCameraFrame(){
  const stage=$('stage'),frame=$('cameraFrame');if(!stage||!frame||!stage.clientWidth||!stage.clientHeight)return;
  const ratio=videoFormat==='landscape'?16/9:9/16,w=Math.min(stage.clientWidth,stage.clientHeight*ratio);
@@ -169,24 +169,65 @@ function animate(){if(!playing)return;updateReader(seconds());raf=requestAnimati
 async function play(){if(!current||!hasAudio(current,mode)){writeStatus('Il manque l’audio de ce mode.');return false}if(playing)return true;const audio=$('songPlayer');try{await audio.play()}catch(e){writeStatus('Lecture impossible : '+e.message);return false}playing=true;clockStarted=performance.now();$('play').textContent='❚❚ Pause';raf=requestAnimationFrame(animate);return true}
 function pause(){if(!playing)return;timeBefore=seconds();playing=false;cancelAnimationFrame(raf);$('songPlayer').pause();$('play').textContent='▶ Reprendre'}
 function stopPlaying(){dragOffset=0;drag=null;playing=false;cancelAnimationFrame(raf);const audio=$('songPlayer');audio.pause();try{audio.currentTime=0}catch{}timeBefore=0;$('play').textContent='▶ Répéter';updateReader(0)}
-async function camera(){if(!navigator.mediaDevices?.getUserMedia){writeStatus('Caméra indisponible : cette application doit être ouverte en HTTPS.');return false}try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1080},height:{ideal:1920}},audio:{echoCancellation:true,noiseSuppression:true}});$('cameraPreview').srcObject=stream;setCameraZoom(1);$('placeholder').classList.add('hidden');$('stage').classList.toggle('rear',facing==='environment');$('camToggle').textContent='📷 Caméra active';setImmersive(true);return true}catch(e){writeStatus('Autorise caméra et micro sur ton iPhone : '+e.message);return false}}
+async function camera(){
+ if(!navigator.mediaDevices?.getUserMedia){writeStatus('Caméra indisponible : ouvre l’application en HTTPS.');return false}
+ try{
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  // On recent iOS Safari versions, a portrait (1080x1920) constraint may produce a landscape recording.
+  // Ask for native landscape sensor dimensions and do the final portrait/landscape crop in our canvas.
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:{echoCancellation:true,noiseSuppression:true}});
+  const preview=$('cameraPreview');
+  preview.srcObject=stream;
+  try{await preview.play()}catch{}
+  setCameraZoom(1);$('placeholder').classList.add('hidden');
+  $('stage').classList.toggle('rear',facing==='environment');
+  $('camToggle').textContent='📷 Caméra active';
+  setImmersive(true);
+  return true;
+ }catch(e){writeStatus('Autorise caméra et micro sur ton iPhone : '+e.message);return false}
+}
+async function waitForCameraFrame(){
+ const v=$('cameraPreview');
+ if(v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0)return true;
+ return new Promise(resolve=>{
+  let done=false;
+  const finish=()=>{if(done)return;done=true;v.removeEventListener('loadeddata',check);v.removeEventListener('playing',check);resolve(v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0)};
+  const check=()=>{if(v.readyState>=2&&v.videoWidth>0&&v.videoHeight>0)finish()};
+  v.addEventListener('loadeddata',check);v.addEventListener('playing',check);
+  setTimeout(finish,3500);check();
+ });
+}
 async function counter(){counting=true;for(let n=Number($('countdown').value);n>0;n--){writeStatus('Départ dans '+n+'…');await new Promise(r=>setTimeout(r,1000));if(!counting)return false}counting=false;return true}
 function mime(){if(!window.MediaRecorder)return'';for(const s of ['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'])if(MediaRecorder.isTypeSupported(s))return s;return''}
-async function startRecording(){if(recording||counting||!current||!hasAudio(current,mode)){writeStatus('Ajoute les fichiers audio avant de filmer.');return}
- if(!stream&&!await camera())return;if(!window.MediaRecorder){writeStatus('L’enregistrement vidéo n’est pas disponible dans ce navigateur.');return}if(!await counter())return;
+async function startRecording(){
+ if(recording||counting||!current||!hasAudio(current,mode)){writeStatus('Ajoute les fichiers audio avant de filmer.');return}
+ if(pendingVideoBlob){
+  if(!confirm('Une vidéo précédente est encore en attente. La remplacer par une nouvelle prise ?'))return;
+  discardPendingVideo(false);
+ }
+
+ if(!stream&&!await camera())return;if(!window.MediaRecorder){writeStatus('L’enregistrement vidéo n’est pas disponible dans ce navigateur.');return}
+ if(!await waitForCameraFrame()){writeStatus('La caméra n’a pas encore produit d’image. Réessaie dans un instant.');return}
+ if(!await counter())return;
  stopPlaying();let audioTracks=stream.getAudioTracks();
  try{recCtx=new(window.AudioContext||window.webkitAudioContext)();await recCtx.resume();recDest=recCtx.createMediaStreamDestination();recMic=recCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));recMic.connect(recDest);
  const audio=$('songPlayer');recSource=recCtx.createMediaElementSource(audio);recSource.connect(recDest);recSource.connect(recCtx.destination);audioTracks=recDest.stream.getAudioTracks()}
  catch(e){writeStatus('Mode de secours : le micro seul sera enregistré. '+e.message);audioTracks=stream.getAudioTracks()}
  recordedFormat=videoFormat;
  let videoTrack=startZoomCapture();
- if(!videoTrack){setCameraZoom(1);writeStatus('Attention : enregistrement au format natif de la caméra, Safari ne permet pas le format vidéo sélectionné.');}
+ if(!videoTrack){
+  const proceed=confirm('Safari ne permet pas de garantir le format '+(recordedFormat==='portrait'?'vertical 9:16':'paysage 16:9')+'. Continuer au format natif de la caméra (qui peut être paysage) ?');
+  if(!proceed){writeStatus('Enregistrement annulé : format demandé non disponible sur cet iPhone.');await releaseMixer();return}
+  setCameraZoom(1);
+  writeStatus('Mode de secours : le format vidéo final peut être différent du format choisi.');
+ }
  const m=mime(),recordOptions=m?{mimeType:m,videoBitsPerSecond:3500000}:undefined;
  let rec=null;
  try{
   recStream=new MediaStream([videoTrack||stream.getVideoTracks()[0],...audioTracks]);
   rec=new MediaRecorder(recStream,recordOptions);
  }catch(e){
+  if(!confirm('L’enregistrement au format '+(recordedFormat==='portrait'?'vertical':'paysage')+' a été refusé par Safari. Voulez-vous enregistrer au format natif, sans garantie ?')){writeStatus('Prise annulée : format non disponible.');await releaseMixer();return}
   stopZoomCapture();setCameraZoom(1);
   try{recStream=new MediaStream([...stream.getVideoTracks(),...audioTracks]);rec=new MediaRecorder(recStream,recordOptions)}
   catch(err){writeStatus('Enregistrement impossible : '+err.message);await releaseMixer();return}
@@ -194,18 +235,57 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
  recorder=rec;recChunks=[];
  recorder.ondataavailable=e=>{if(e.data?.size)recChunks.push(e.data)};
  recorder.onerror=e=>writeStatus('Erreur vidéo : '+(e.error?.message||'inconnue'));
- recorder.onstop=async()=>{const type=rec.mimeType||'video/mp4';const blob=new Blob(recChunks,{type});await releaseMixer();if(!blob.size){writeStatus('Aucune vidéo enregistrée. Réessaie.');return}
- if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(blob);const ext=type.includes('webm')?'webm':'mp4',fileName=(current?.title||'OKAJB').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_')+'_'+Date.now()+'.'+ext;
- const out=$('videoOutput');out.innerHTML='';const preview=document.createElement('video');preview.controls=true;preview.playsInline=true;preview.src=videoURL;out.append(preview);
- const videoMeta=document.createElement('p');videoMeta.className='muted';videoMeta.textContent='Vérification du format…';out.append(videoMeta);
- preview.addEventListener('loadedmetadata',()=>{
-  const w=preview.videoWidth,h=preview.videoHeight,portrait=h>w,ok=recordedFormat==='portrait'?portrait:w>h;
-  videoMeta.textContent='Vidéo : '+w+' × '+h+' ('+(portrait?'vertical':'paysage')+'). '+(ok?'✓ Format conforme.':'⚠ Safari n’a pas respecté le format demandé.');
- });const link=document.createElement('a');link.href=videoURL;link.download=fileName;link.textContent='⬇ Télécharger la vidéo';out.append(link);
- const share=document.createElement('button');share.textContent='Partager / Enregistrer dans Photos';share.onclick=async()=>{try{const f=new File([blob],fileName,{type});if(navigator.canShare?.({files:[f]}))await navigator.share({files:[f],title:fileName});else writeStatus('Utilise « Télécharger la vidéo », puis partage-la vers Photos.')}catch(e){if(e.name!=='AbortError')writeStatus('Partage indisponible : '+e.message)}};out.append(share);writeStatus('Vidéo prête : regarde l’aperçu et contrôle le son et l’orientation.');}
+ recorder.onstop=async()=>{
+  const type=rec.mimeType||'video/mp4',blob=new Blob(recChunks,{type});
+  await releaseMixer();
+  if(!blob.size){writeStatus('Aucune vidéo enregistrée. Réessaie.');return}
+  if(pendingVideoURL)URL.revokeObjectURL(pendingVideoURL);
+  pendingVideoBlob=blob;pendingVideoURL=URL.createObjectURL(blob);
+  const fileExt=type.includes('webm')?'webm':'mp4';
+  const fileName=(current?.title||'OKAJB').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_')+'_'+Date.now()+'.'+fileExt;
+  const out=$('videoOutput');out.replaceChildren();
+  const heading=document.createElement('h2');heading.textContent='🎬 Ta prise est terminée';out.append(heading);
+  const caption=document.createElement('p');caption.className='muted';caption.textContent='Regarde la vidéo avant de décider de l’enregistrer ou de la supprimer.';out.append(caption);
+  const preview=document.createElement('video');preview.controls=true;preview.playsInline=true;preview.preload='metadata';preview.src=pendingVideoURL;out.append(preview);
+  const videoMeta=document.createElement('p');videoMeta.className='muted';videoMeta.textContent='Vérification du format vidéo…';out.append(videoMeta);
+  preview.addEventListener('loadedmetadata',()=>{
+   const w=preview.videoWidth,h=preview.videoHeight;
+   if(!w||!h){videoMeta.textContent='Dimensions non disponibles dans cet aperçu. Contrôle le format dans Photos.';return}
+   const ratio=w/h,desired=recordedFormat==='portrait'?9/16:16/9;
+   const ok=Math.abs(ratio-desired)<0.13;
+   videoMeta.textContent='Vidéo : '+w+' × '+h+' pixels — '+(h>w?'verticale':'paysage')+'. '+(ok?'✓ Format '+(recordedFormat==='portrait'?'9:16':'16:9')+' conforme.':'⚠ Le format demandé n’a pas été respecté. Tu peux tout de même enregistrer la prise ou la supprimer.');
+  });
+  const actions=document.createElement('div');actions.className='reviewActions';
+  const save=document.createElement('button');save.className='saveTake';save.textContent='💾 Enregistrer dans Photos';
+  save.onclick=async()=>{
+   if(!pendingVideoBlob){writeStatus('Cette prise a été supprimée.');return}
+   try{
+    const f=new File([pendingVideoBlob],fileName,{type});
+    if(navigator.canShare?.({files:[f]})){
+     await navigator.share({files:[f],title:fileName});
+     writeStatus('Dans la feuille de partage, choisis « Enregistrer la vidéo ». Vérifie ensuite l’app Photos.');
+    }else{
+     const link=document.createElement('a');link.href=pendingVideoURL;link.download=fileName;link.textContent='';document.body.appendChild(link);link.click();link.remove();
+     writeStatus('Téléchargement proposé. Retrouve la vidéo dans Fichiers, puis partage-la vers Photos.');
+    }
+   }catch(e){if(e?.name!=='AbortError')writeStatus('Enregistrement non confirmé : '+e.message)}
+  };
+  const remove=document.createElement('button');remove.className='deleteTake';remove.textContent='🗑 Supprimer la prise';
+  remove.onclick=()=>{
+   if(confirm('Supprimer cette prise vidéo ? Cette action est définitive si tu ne l’as pas enregistrée ailleurs.')){
+    discardPendingVideo(false);
+    writeStatus('La prise a été supprimée. Tu peux recommencer à filmer.');
+   }
+  };
+  actions.append(save,remove);out.append(actions);
+  writeStatus('Vidéo terminée : choisis Enregistrer ou Supprimer.');
+  out.scrollIntoView({behavior:'smooth',block:'start'});
+ }
+
  const saveVideoOnStop=recorder.onstop;
  try{recorder.start(800)}catch(e){
   if(zoomCaptureActive){
+   if(!confirm('Safari ne peut pas lancer l’enregistrement avec le format choisi. Continuer au format natif, sans garantie ?')){writeStatus('Prise annulée : format non disponible.');await releaseMixer();return}
    stopZoomCapture();setCameraZoom(1);
    try{
     recStream=new MediaStream([...stream.getVideoTracks(),...audioTracks]);
@@ -221,6 +301,12 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
  }
  recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle'])$(id).disabled=true;
  if(!await play()){writeStatus('La caméra enregistre, mais la musique ne démarre pas. Arrête et recommence.')}
+}
+function discardPendingVideo(announce=true){
+ if(pendingVideoURL){URL.revokeObjectURL(pendingVideoURL);pendingVideoURL=null}
+ pendingVideoBlob=null;recChunks=[];
+ $('videoOutput').replaceChildren();
+ if(announce)writeStatus('Prise supprimée.');
 }
 async function releaseMixer(){stopZoomCapture();try{await recCtx?.close()}catch{}recCtx=recDest=recSource=recMic=recStream=null;
  // On Safari, createMediaElementSource() can only be called once per element.
