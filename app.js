@@ -9,6 +9,49 @@ let db,current=null,editing=null,mode='instrumental',stream=null,facing='user',r
 let recorder=null,recChunks=[],recCtx=null,recDest=null,recSource=null,recMic=null,recStream=null;
 let objectAudioURL=null,videoURL=null,raf=null,clockStarted=0,timeBefore=0,playing=false,skipRecordStop=false;
 let uploadedRemoved={instrumental:false,full:false};
+let cameraZoom=1,zoomPointers=new Map(),zoomPinch=null,zoomCanvas=null,zoomCanvasStream=null,zoomDrawFrame=0,zoomCaptureActive=false,zoomRecordingSupported=true;
+function setCameraZoom(value){
+ if(recording&&!zoomCaptureActive)return;
+ cameraZoom=Math.min(3,Math.max(1,Number(value)||1));
+ $('stage').style.setProperty('--camera-zoom',String(cameraZoom));
+ $('zoomReset').textContent=cameraZoom.toFixed(1).replace('.',',')+'×';
+ $('zoomReset').setAttribute('aria-label','Zoom caméra '+cameraZoom.toFixed(1)+' fois. Appuyer pour revenir à 1 fois');
+}
+function pinchDistance(){
+ const a=Array.from(zoomPointers.values());
+ return a.length<2?0:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);
+}
+function startZoomCapture(){
+ const video=$('cameraPreview');
+ if(typeof HTMLCanvasElement==='undefined'||!HTMLCanvasElement.prototype.captureStream||video.readyState<2||!video.videoWidth||!video.videoHeight)return null;
+ const canvas=document.createElement('canvas'),w=video.videoWidth,h=video.videoHeight,scale=Math.min(1,1280/Math.max(w,h));
+ canvas.width=Math.max(2,Math.round(w*scale));canvas.height=Math.max(2,Math.round(h*scale));
+ const ctx=canvas.getContext('2d',{alpha:false});
+ if(!ctx)return null;
+ zoomCanvas=canvas;
+ const draw=()=>{
+  if(!zoomCanvas)return;
+  if(video.readyState>=2){
+   const factor=Math.max(1,cameraZoom),cropW=w/factor,cropH=h/factor;
+   try{ctx.drawImage(video,(w-cropW)/2,(h-cropH)/2,cropW,cropH,0,0,canvas.width,canvas.height)}catch{}
+  }
+  zoomDrawFrame=requestAnimationFrame(draw);
+ };
+ draw();
+ try{
+  zoomCanvasStream=canvas.captureStream(24);
+  const track=zoomCanvasStream.getVideoTracks()[0];
+  if(!track){stopZoomCapture();return null}
+  zoomCaptureActive=true;
+  return track;
+ }catch(e){stopZoomCapture();return null}
+}
+function stopZoomCapture(){
+ if(zoomDrawFrame)cancelAnimationFrame(zoomDrawFrame);
+ zoomDrawFrame=0;
+ zoomCanvasStream?.getTracks().forEach(t=>t.stop());
+ zoomCanvasStream=null;zoomCanvas=null;zoomCaptureActive=false;
+}
 const hasAudio=(s,m)=>!!(m==='instrumental'?(s?.instrumentalFile||s?.instrumentalUrl):(s?.fullFile||s?.fullUrl));
 const trackSource=(s,m)=>m==='instrumental'?(s.instrumentalFile||s.instrumentalUrl):(s.fullFile||s.fullUrl);
 const timingKeys=(m)=>m==='instrumental'?['offsetInstrumental','durationInstrumental']:['offsetFull','durationFull'];
@@ -68,16 +111,33 @@ function setImmersive(on){
 }
 const reader=document.querySelector('#stage .reader');
 reader.onpointerdown=e=>{
- if(!e.isPrimary)return;
+ if(!current)return;
+ e.preventDefault();
  reader.setPointerCapture(e.pointerId);
- drag={id:e.pointerId,start:e.clientY,origin:readerY,delta:0};
+ zoomPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(zoomPointers.size===1){zoomPinch=null;drag={id:e.pointerId,start:e.clientY,origin:readerY,delta:0};}
+ else if(zoomPointers.size===2){drag=null;zoomPinch={distance:Math.max(1,pinchDistance()),startZoom:cameraZoom};}
 };
 reader.onpointermove=e=>{
+ if(!zoomPointers.has(e.pointerId))return;
+ zoomPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(zoomPointers.size>=2){
+  if(zoomPinch)setCameraZoom(zoomPinch.startZoom*(pinchDistance()/zoomPinch.distance));
+  return;
+ }
  if(!drag||drag.id!==e.pointerId)return;
  drag.delta=e.clientY-drag.start;
  updateReader($('songPlayer').currentTime||0);
 };
-reader.onlostpointercapture=()=>{drag=null};
+function endZoomPointer(e){
+ zoomPointers.delete(e.pointerId);
+ drag=null;
+ if(zoomPointers.size<2)zoomPinch=null;
+}
+reader.onpointerup=endZoomPointer;
+reader.onpointercancel=endZoomPointer;
+reader.onlostpointercapture=endZoomPointer;
+$('zoomReset').onclick=()=>setCameraZoom(1);
 if($('expandStage'))$('expandStage').onclick=()=>setImmersive(!document.body.classList.contains('immersive'));
 function updateReader(t){if(!current)return;const el=$('readerText'),stage=$('stage');const offset=Number($('start').value),duration=Math.max(1,Number($('duration').value)),p=Math.max(0,Math.min(1,(t-offset)/duration));const height=stage.clientHeight,travel=Math.max(0,el.scrollHeight-height*.52);const base=height*.30-p*travel;
  readerY=Math.max(height*.30-travel,Math.min(height*.30,drag?drag.origin+drag.delta:base+dragOffset));
@@ -89,7 +149,7 @@ function animate(){if(!playing)return;updateReader(seconds());raf=requestAnimati
 async function play(){if(!current||!hasAudio(current,mode)){writeStatus('Il manque l’audio de ce mode.');return false}if(playing)return true;const audio=$('songPlayer');try{await audio.play()}catch(e){writeStatus('Lecture impossible : '+e.message);return false}playing=true;clockStarted=performance.now();$('play').textContent='❚❚ Pause';raf=requestAnimationFrame(animate);return true}
 function pause(){if(!playing)return;timeBefore=seconds();playing=false;cancelAnimationFrame(raf);$('songPlayer').pause();$('play').textContent='▶ Reprendre'}
 function stopPlaying(){dragOffset=0;drag=null;playing=false;cancelAnimationFrame(raf);const audio=$('songPlayer');audio.pause();try{audio.currentTime=0}catch{}timeBefore=0;$('play').textContent='▶ Répéter';updateReader(0)}
-async function camera(){if(!navigator.mediaDevices?.getUserMedia){writeStatus('Caméra indisponible : cette application doit être ouverte en HTTPS.');return false}try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1080},height:{ideal:1920}},audio:{echoCancellation:true,noiseSuppression:true}});$('cameraPreview').srcObject=stream;$('placeholder').classList.add('hidden');$('stage').classList.toggle('rear',facing==='environment');$('camToggle').textContent='📷 Caméra active';setImmersive(true);return true}catch(e){writeStatus('Autorise caméra et micro sur ton iPhone : '+e.message);return false}}
+async function camera(){if(!navigator.mediaDevices?.getUserMedia){writeStatus('Caméra indisponible : cette application doit être ouverte en HTTPS.');return false}try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1080},height:{ideal:1920}},audio:{echoCancellation:true,noiseSuppression:true}});$('cameraPreview').srcObject=stream;setCameraZoom(1);$('placeholder').classList.add('hidden');$('stage').classList.toggle('rear',facing==='environment');$('camToggle').textContent='📷 Caméra active';setImmersive(true);return true}catch(e){writeStatus('Autorise caméra et micro sur ton iPhone : '+e.message);return false}}
 async function counter(){counting=true;for(let n=Number($('countdown').value);n>0;n--){writeStatus('Départ dans '+n+'…');await new Promise(r=>setTimeout(r,1000));if(!counting)return false}counting=false;return true}
 function mime(){if(!window.MediaRecorder)return'';for(const s of ['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'])if(MediaRecorder.isTypeSupported(s))return s;return''}
 async function startRecording(){if(recording||counting||!current||!hasAudio(current,mode)){writeStatus('Ajoute les fichiers audio avant de filmer.');return}
@@ -98,17 +158,44 @@ async function startRecording(){if(recording||counting||!current||!hasAudio(curr
  try{recCtx=new(window.AudioContext||window.webkitAudioContext)();await recCtx.resume();recDest=recCtx.createMediaStreamDestination();recMic=recCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));recMic.connect(recDest);
  const audio=$('songPlayer');recSource=recCtx.createMediaElementSource(audio);recSource.connect(recDest);recSource.connect(recCtx.destination);audioTracks=recDest.stream.getAudioTracks()}
  catch(e){writeStatus('Mode de secours : le micro seul sera enregistré. '+e.message);audioTracks=stream.getAudioTracks()}
- recStream=new MediaStream([...stream.getVideoTracks(),...audioTracks]);let rec=null;try{const m=mime();rec=new MediaRecorder(recStream,m?{mimeType:m,videoBitsPerSecond:3500000}:undefined)}catch(e){writeStatus('Enregistrement impossible : '+e.message);await releaseMixer();return}recorder=rec;recChunks=[];
+ let videoTrack=startZoomCapture();
+ if(!videoTrack){setCameraZoom(1);writeStatus('Zoom pendant la vidéo indisponible sur ce navigateur : enregistrement en cadrage normal (1×).');}
+ const m=mime(),recordOptions=m?{mimeType:m,videoBitsPerSecond:3500000}:undefined;
+ let rec=null;
+ try{
+  recStream=new MediaStream([videoTrack||stream.getVideoTracks()[0],...audioTracks]);
+  rec=new MediaRecorder(recStream,recordOptions);
+ }catch(e){
+  stopZoomCapture();setCameraZoom(1);
+  try{recStream=new MediaStream([...stream.getVideoTracks(),...audioTracks]);rec=new MediaRecorder(recStream,recordOptions)}
+  catch(err){writeStatus('Enregistrement impossible : '+err.message);await releaseMixer();return}
+ }
+ recorder=rec;recChunks=[];
  recorder.ondataavailable=e=>{if(e.data?.size)recChunks.push(e.data)};
  recorder.onerror=e=>writeStatus('Erreur vidéo : '+(e.error?.message||'inconnue'));
  recorder.onstop=async()=>{const type=rec.mimeType||'video/mp4';const blob=new Blob(recChunks,{type});await releaseMixer();if(!blob.size){writeStatus('Aucune vidéo enregistrée. Réessaie.');return}
  if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(blob);const ext=type.includes('webm')?'webm':'mp4',fileName=(current?.title||'OKAJB').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]/g,'_')+'_'+Date.now()+'.'+ext;
  const out=$('videoOutput');out.innerHTML='';const preview=document.createElement('video');preview.controls=true;preview.playsInline=true;preview.src=videoURL;out.append(preview);const link=document.createElement('a');link.href=videoURL;link.download=fileName;link.textContent='⬇ Télécharger la vidéo';out.append(link);
  const share=document.createElement('button');share.textContent='Partager / Enregistrer dans Photos';share.onclick=async()=>{try{const f=new File([blob],fileName,{type});if(navigator.canShare?.({files:[f]}))await navigator.share({files:[f],title:fileName});else writeStatus('Utilise « Télécharger la vidéo », puis partage-la vers Photos.')}catch(e){if(e.name!=='AbortError')writeStatus('Partage indisponible : '+e.message)}};out.append(share);writeStatus('Vidéo prête : regarde l’aperçu et contrôle le son et l’orientation.');}
- recorder.start(800);recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek'])$(id).disabled=true;
+ try{recorder.start(800)}catch(e){
+  if(zoomCaptureActive){
+   stopZoomCapture();setCameraZoom(1);
+   try{
+    recStream=new MediaStream([...stream.getVideoTracks(),...audioTracks]);
+    rec=new MediaRecorder(recStream,recordOptions);
+    recorder=rec;recChunks=[];
+    rec.ondataavailable=e=>{if(e.data?.size)recChunks.push(e.data)};
+    rec.onerror=e=>writeStatus('Erreur vidéo : '+(e.error?.message||'inconnue'));
+    rec.onstop=async()=>{await releaseMixer();writeStatus('Vidéo brute enregistrée sans zoom : refais la prise si tu as besoin de zoomer.');};
+    rec.start(800);
+    writeStatus('Le zoom enregistré est indisponible dans ce navigateur : vidéo enregistrée sans zoom.');
+   }catch(err){writeStatus('Enregistrement impossible : '+err.message);await releaseMixer();return}
+  }else{writeStatus('Enregistrement impossible : '+e.message);await releaseMixer();return}
+ }
+ recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek'])$(id).disabled=true;
  if(!await play()){writeStatus('La caméra enregistre, mais la musique ne démarre pas. Arrête et recommence.')}
 }
-async function releaseMixer(){try{await recCtx?.close()}catch{}recCtx=recDest=recSource=recMic=recStream=null;
+async function releaseMixer(){stopZoomCapture();try{await recCtx?.close()}catch{}recCtx=recDest=recSource=recMic=recStream=null;
  // On Safari, createMediaElementSource() can only be called once per element.
  const old=$('songPlayer'),fresh=old.cloneNode(false);fresh.id='songPlayer';fresh.preload='metadata';old.replaceWith(fresh);fresh.onended=()=>{if(!recording)stopPlaying()};fresh.onloadedmetadata=()=>updateReader(0);if(current)useTrackURL()}
 async function stopRecording(){if(!recording)return;recording=false;if(recorder?.state!=='inactive')recorder.stop();$('recFlag').textContent='PRÊT';$('recFlag').classList.remove('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek'])$(id).disabled=false;if(current){$('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');$('record').disabled=!hasAudio(current,mode)||!current.lyrics}}

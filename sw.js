@@ -1,4 +1,4 @@
-const CACHE='okajb-prompteur-v1-5';
+const CACHE='okajb-prompteur-v1-6';
 const CORE=['./','./index.html','./app.js','./manifest.webmanifest','./catalogue.json','./logo-okajb-prompteur.png','./icon-192.png','./icon-512.png','./apple-touch-icon.png','./favicon.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(x=>x.startsWith('okajb-prompteur-')&&x!==CACHE).map(x=>caches.delete(x)))));self.clients.claim()});
