@@ -14,7 +14,7 @@ const trackSource=(s,m)=>m==='instrumental'?(s.instrumentalFile||s.instrumentalU
 const timingKeys=(m)=>m==='instrumental'?['offsetInstrumental','durationInstrumental']:['offsetFull','durationFull'];
 function tx(mode='readonly'){return db.transaction(STORE,mode).objectStore(STORE)}
 function req(r){return new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
-const getAll=()=>req(tx().getAll()), get=id=>req(tx().get(id)), put=s=>req(tx('readwrite').put(s)), del=id=>req(tx('readwrite').delete(id));
+const getAll=()=>req(tx().getAll()), get=id=>req(tx().get(id)), put=s=>req(tx('readwrite').put(s)), del=id=>req(tx('readwrite').delete(id)), clearAll=()=>req(tx('readwrite').clear());
 async function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(STORE,{keyPath:'id'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 async function loadCatalog(){
  const response=await fetch('./catalogue.json',{cache:'no-store'});if(!response.ok)throw Error('Catalogue indisponible');
@@ -157,14 +157,14 @@ async function restorePrivate(file){
       const s={...previous,id:item.id,title:item.title,lyrics:item.lyrics,offsetInstrumental:Number(item.offsetInstrumental)||0,offsetFull:Number(item.offsetFull)||0,durationInstrumental:Number(item.durationInstrumental)||60,durationFull:Number(item.durationFull)||60,updated:Date.now()};
       for(const [key,field] of [['instrumental','instrumentalFile'],['full','fullFile']]){
         const tr=item.tracks?.[key];
-        if(tr){s[field]=new Blob([await file.slice(payload+tr.offset,payload+tr.offset+tr.size).arrayBuffer()],{type:'audio/mpeg'});s[key+'Name']=tr.name||item.id+'-'+key+'.mp3';}
+        if(tr){s[field]=file.slice(payload+tr.offset,payload+tr.offset+tr.size,'audio/mpeg');s[key+'Name']=tr.name||item.id+'-'+key+'.mp3';}
       }
       s.instrumentalUrl='';s.fullUrl='';
       try{await put(s)}catch(err){throw Error('Enregistrement impossible après '+n+' titres (mémoire insuffisante ?) : '+err.message)}
       n++;uiImport('Import '+n+'/'+songs.length+' : '+item.title,n);
       await new Promise(resolve=>setTimeout(resolve,0));
     }
-    await renderSongs();uiImport('✅ '+n+' titres importés dans cet appareil ! Tes fichiers restent privés.',n);
+    await renderSongs();const ready=(await getAll()).filter(s=>s.lyrics&&hasAudio(s,'instrumental')&&hasAudio(s,'full')).length;uiImport('✅ '+ready+' chansons complètes disponibles. Écoute ton jazz reste en attente. Tes fichiers restent privés.',n);
     try{await navigator.storage?.persist?.()}catch{};
   }catch(e){uiImport('❌ Échec : '+e.message,-1);console.error(e)}
 }
@@ -186,6 +186,7 @@ async function makeBackup(){
     uiImport('Sauvegarde créée ('+Math.round(allBlob.size/1048576)+' Mo). Vérifie sa présence dans Fichiers / Téléchargements.',-1);
   }catch(e){uiImport('Sauvegarde impossible : '+e.message,-1)}
 }
+async function resetLibrary(){if(!confirm('Supprimer les chansons enregistrées sur cet iPhone ? Vérifie que tu as conservé ton fichier privé .okajb avant de confirmer.'))return;await stopAll();await clearAll();current=null;await loadCatalog();await renderSongs();show('library');uiImport('Bibliothèque réinitialisée. Tu peux maintenant réimporter le fichier .okajb.',-1)}
 // Backwards compatibility with previous V1.3 JSON exports, which may be very large.
 async function restoreLegacyJSON(file){
   if(!confirm('Importer une ancienne sauvegarde JSON ? Préfère le format .okajb pour les grosses bibliothèques.'))return;
@@ -212,7 +213,7 @@ $('songPlayer').onended=()=>{if(!recording)stopPlaying()};$('songPlayer').onload
 $('seek').oninput=e=>{if(!recording&&current){$('songPlayer').currentTime=Number(e.target.value);updateReader(Number(e.target.value))}};
 for(const id of ['fontSize','start','duration','volume'])$(id).oninput=updateLabels;
 $('rememberTiming').onclick=async()=>{if(!current)return;const[a,b]=timingKeys(mode);current[a]=Number($('start').value);current[b]=Number($('duration').value);await put(current);writeStatus('Réglage mémorisé pour cette version audio.')};
-$('backup').onclick=makeBackup;$('restore').onchange=async e=>{await restorePrivate(e.target.files[0]);e.target.value=''};
-async function init(){db=await openDB();try{await loadCatalog()}catch(e){console.warn('Catalogue:',e.message)}await renderSongs();
+$('backup').onclick=makeBackup;$('resetLibrary').onclick=resetLibrary;$('restore').onchange=async e=>{await restorePrivate(e.target.files[0]);e.target.value=''};
+async function init(){db=await openDB();try{await loadCatalog()}catch(e){console.warn('Catalogue:',e.message)}$('fontSize').value=36;updateLabels();await renderSongs();
  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(console.warn);setTimeout(()=>$('splash')?.remove(),1600)}
 init().catch(e=>{console.error(e);alert('Impossible d’ouvrir OKAJB Prompteur : '+e.message)});
