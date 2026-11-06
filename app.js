@@ -6,7 +6,7 @@ const fmt=s=>{s=Math.max(0,Math.floor(Number(s)||0));return String(Math.floor(s/
 const writeStatus=(s,id='studioStatus')=>$(id).textContent=s;
 const DB='okajb-prompter-v1', STORE='songs';
 let db,current=null,editing=null,mode='instrumental',stream=null,facing='user',recording=false,counting=false;
-let recorder=null,recChunks=[],recCtx=null,recDest=null,recSource=null,recMic=null,recStream=null;
+let recorder=null,recChunks=[],recCtx=null,recDest=null,recSource=null,recMic=null,recStream=null,recPlaybackGain=null,recMusicGain=null,recMicGain=null,recMicStream=null;
 let objectAudioURL=null,videoURL=null,raf=null,clockStarted=0,timeBefore=0,playing=false,skipRecordStop=false;
 let uploadedRemoved={instrumental:false,full:false};
 let cameraZoom=1,zoomPointers=new Map(),zoomPinch=null,zoomCanvas=null,zoomCanvasStream=null,zoomDrawFrame=0,zoomCaptureActive=false,zoomRecordingSupported=true;
@@ -111,7 +111,28 @@ async function saveSong(){const title=$('titleInput').value.trim();if(!title){wr
  try{await put(s);await renderSongs();show('library')}catch(e){writeStatus('Sauvegarde impossible : espace insuffisant sur cet appareil ? '+e.message,'editStatus')}
 }
 async function stopEverything(){counting=false;await stopRecording();stopPlaying()}
-function useTrackURL(){if(objectAudioURL){URL.revokeObjectURL(objectAudioURL);objectAudioURL=null}const src=trackSource(current,mode);const audio=$('songPlayer');audio.pause();audio.removeAttribute('src');audio.load();if(src instanceof Blob){objectAudioURL=URL.createObjectURL(src);audio.src=objectAudioURL}else if(typeof src==='string'&&src){audio.src=src}else audio.removeAttribute('src');audio.volume=Number($('volume').value)/100;audio.load()}
+function audioSessionType(type){try{if(navigator.audioSession)navigator.audioSession.type=type}catch{}}
+async function prepareMusicGraph(){
+ if(!recCtx){
+  const AudioConstructor=window.AudioContext||window.webkitAudioContext;
+  if(!AudioConstructor)throw Error('Mixage audio indisponible sur ce navigateur.');
+  recCtx=new AudioConstructor({latencyHint:'interactive'});
+  recDest=recCtx.createMediaStreamDestination();
+  recSource=recCtx.createMediaElementSource($('songPlayer'));
+  recPlaybackGain=recCtx.createGain();
+  recMusicGain=recCtx.createGain();
+  recSource.connect(recPlaybackGain);recPlaybackGain.connect(recCtx.destination);
+  recSource.connect(recMusicGain);recMusicGain.connect(recDest);
+  recMusicGain.gain.value=0.94;
+  $('songPlayer').volume=1;
+ }
+ if(recCtx.state==='suspended')await recCtx.resume();
+ recPlaybackGain.gain.value=Number($('volume').value)/100;
+ const tracks=recDest.stream.getAudioTracks();
+ if(!tracks.length)throw Error('Piste musicale enregistrable indisponible.');
+ return tracks;
+}
+function useTrackURL(){if(objectAudioURL){URL.revokeObjectURL(objectAudioURL);objectAudioURL=null}const src=trackSource(current,mode);const audio=$('songPlayer');audio.pause();audio.removeAttribute('src');audio.load();if(src instanceof Blob){objectAudioURL=URL.createObjectURL(src);audio.src=objectAudioURL}else if(typeof src==='string'&&src){audio.src=src}else audio.removeAttribute('src');audio.volume=recPlaybackGain?1:Number($('volume').value)/100;audio.load()}
 async function openSong(id){await stopEverything();current=await get(id);if(!current)return;mode=hasAudio(current,'instrumental')?'instrumental':hasAudio(current,'full')?'full':'instrumental';show('studio');$('studioTitle').textContent=current.title;$('readerText').textContent=current.lyrics||'Ajoute les paroles de cette chanson dans « Modifier ». ';selectMode(mode);writeStatus('Choisis ton mode, puis « Répéter » ou « Filmer ».')}
 function selectMode(next){if(recording||counting)return;stopPlaying();mode=next;useTrackURL();$('chooseInstru').classList.toggle('active',mode==='instrumental');$('chooseVoix').classList.toggle('active',mode==='full');
  $('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');
@@ -167,9 +188,9 @@ function updateReader(t){if(!current)return;const el=$('readerText'),stage=$('st
  if(drag)dragOffset=readerY-base;
  el.style.transform=`translateY(${readerY}px)`;
  const audio=$('songPlayer'),end=Number.isFinite(audio.duration)&&audio.duration>0?audio.duration:offset+duration;$('clock').textContent=fmt(t)+' / '+fmt(end);$('seek').max=end;$('seek').value=Math.min(t,end)}
-function updateLabels(){$('fontText').textContent=$('fontSize').value+' px';$('startText').textContent=$('start').value+' s';$('durationText').textContent=$('duration').value+' s';$('volumeText').textContent=$('volume').value+' %';$('readerText').style.fontSize=$('fontSize').value+'px';$('songPlayer').volume=Number($('volume').value)/100;if(!playing)updateReader($('songPlayer').currentTime||0)}
+function updateLabels(){$('fontText').textContent=$('fontSize').value+' px';$('startText').textContent=$('start').value+' s';$('durationText').textContent=$('duration').value+' s';$('volumeText').textContent=$('volume').value+' %';$('readerText').style.fontSize=$('fontSize').value+'px';if(recPlaybackGain){recPlaybackGain.gain.value=Number($('volume').value)/100;$('songPlayer').volume=1}else $('songPlayer').volume=Number($('volume').value)/100;if(!playing)updateReader($('songPlayer').currentTime||0)}
 function animate(){if(!playing)return;updateReader(seconds());raf=requestAnimationFrame(animate)}
-async function play(){if(!current||!hasAudio(current,mode)){writeStatus('Il manque l’audio de ce mode.');return false}if(playing)return true;const audio=$('songPlayer');try{await audio.play()}catch(e){writeStatus('Lecture impossible : '+e.message);return false}playing=true;clockStarted=performance.now();$('play').textContent='❚❚ Pause';raf=requestAnimationFrame(animate);return true}
+async function play(){if(!current||!hasAudio(current,mode)){writeStatus('Il manque l’audio de ce mode.');return false}if(playing)return true;const audio=$('songPlayer');try{audioSessionType('playback');await prepareMusicGraph();await audio.play()}catch(e){writeStatus('Lecture impossible : '+e.message);return false}playing=true;clockStarted=performance.now();$('play').textContent='❚❚ Pause';raf=requestAnimationFrame(animate);return true}
 function pause(){if(!playing)return;timeBefore=seconds();playing=false;cancelAnimationFrame(raf);$('songPlayer').pause();$('play').textContent='▶ Reprendre'}
 function stopPlaying(){dragOffset=0;drag=null;playing=false;cancelAnimationFrame(raf);const audio=$('songPlayer');audio.pause();try{audio.currentTime=0}catch{}timeBefore=0;$('play').textContent='▶ Répéter';updateReader(0)}
 async function camera(){
@@ -178,7 +199,7 @@ async function camera(){
   if(stream)stream.getTracks().forEach(t=>t.stop());
   // On recent iOS Safari versions, a portrait (1080x1920) constraint may produce a landscape recording.
   // Ask for native landscape sensor dimensions and do the final portrait/landscape crop in our canvas.
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:{echoCancellation:true,noiseSuppression:true}});
+  audioSessionType('playback');stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:false});
   const preview=$('cameraPreview');
   preview.srcObject=stream;
   try{await preview.play()}catch{}
@@ -211,11 +232,20 @@ async function startRecording(){
 
  if(!stream&&!await camera())return;if(!window.MediaRecorder){writeStatus('L’enregistrement vidéo n’est pas disponible dans ce navigateur.');return}
  if(!await waitForCameraFrame()){writeStatus('La caméra n’a pas encore produit d’image. Réessaie dans un instant.');return}
- if(!await counter())return;
- stopPlaying();let audioTracks=stream.getAudioTracks();
- try{recCtx=new(window.AudioContext||window.webkitAudioContext)();await recCtx.resume();recDest=recCtx.createMediaStreamDestination();recMic=recCtx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));recMic.connect(recDest);
- const audio=$('songPlayer');recSource=recCtx.createMediaElementSource(audio);recSource.connect(recDest);recSource.connect(recCtx.destination);audioTracks=recDest.stream.getAudioTracks()}
- catch(e){writeStatus('Mode de secours : le micro seul sera enregistré. '+e.message);audioTracks=stream.getAudioTracks()}
+ let audioTracks;
+ try{audioSessionType('playback');audioTracks=await prepareMusicGraph()}
+ catch(e){writeStatus('Musique studio indisponible : '+e.message+'. Enregistrement annulé pour éviter une vidéo muette.');return}
+ if($('recordMic').checked){
+  try{
+   audioSessionType('play-and-record');
+   recMicStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
+   recMic=recCtx.createMediaStreamSource(recMicStream);
+   recMicGain=recCtx.createGain();recMicGain.gain.value=0.7;
+   recMic.connect(recMicGain);recMicGain.connect(recDest);
+  }catch(e){writeStatus('Micro indisponible : '+e.message);await releaseMixer();return}
+ }
+ if(!await counter()){await releaseMixer();return}
+ stopPlaying();
  recordedFormat=videoFormat;
  let videoTrack=startZoomCapture();
  if(!videoTrack){
@@ -302,8 +332,16 @@ async function startRecording(){
    }catch(err){writeStatus('Enregistrement impossible : '+err.message);await releaseMixer();return}
   }else{writeStatus('Enregistrement impossible : '+e.message);await releaseMixer();return}
  }
- recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle'])$(id).disabled=true;
- if(!await play()){writeStatus('La caméra enregistre, mais la musique ne démarre pas. Arrête et recommence.')}
+ recording=true;$('recFlag').textContent='🔴 REC';$('recFlag').classList.add('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle','recordMic'])$(id).disabled=true;
+ // Play music immediately after MediaRecorder starts, in the same task.
+ // Text scrolling and captured audio both derive from this same <audio> timeline.
+ const player=$('songPlayer');
+ try{
+  const started=player.play();
+  playing=true;clockStarted=performance.now();$('play').textContent='❚❚ Pause';
+  raf=requestAnimationFrame(animate);
+  Promise.resolve(started).catch(err=>{writeStatus('La musique ne démarre pas : '+err.message);stopAll()});
+ }catch(e){writeStatus('Démarrage son impossible : '+e.message);await stopAll()}
 }
 function discardPendingVideo(announce=true){
  if(pendingVideoURL){URL.revokeObjectURL(pendingVideoURL);pendingVideoURL=null}
@@ -311,10 +349,15 @@ function discardPendingVideo(announce=true){
  $('videoOutput').replaceChildren();
  if(announce)writeStatus('Prise supprimée.');
 }
-async function releaseMixer(){stopZoomCapture();try{await recCtx?.close()}catch{}recCtx=recDest=recSource=recMic=recStream=null;
- // On Safari, createMediaElementSource() can only be called once per element.
- const old=$('songPlayer'),fresh=old.cloneNode(false);fresh.id='songPlayer';fresh.preload='metadata';old.replaceWith(fresh);fresh.onended=()=>{if(!recording)stopPlaying()};fresh.onloadedmetadata=()=>updateReader(0);if(current)useTrackURL()}
-async function stopRecording(){if(!recording)return;recording=false;if(recorder?.state!=='inactive')recorder.stop();$('recFlag').textContent='PRÊT';$('recFlag').classList.remove('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle'])$(id).disabled=false;if(current){$('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');$('record').disabled=!hasAudio(current,mode)||!current.lyrics}}
+async function releaseMixer(){
+ stopZoomCapture();
+ try{recMic?.disconnect()}catch{}
+ try{recMicGain?.disconnect()}catch{}
+ recMicStream?.getTracks().forEach(t=>t.stop());
+ recMicStream=null;recMic=null;recMicGain=null;recStream=null;
+ audioSessionType('playback');
+}
+async function stopRecording(){if(!recording)return;recording=false;if(recorder?.state!=='inactive')recorder.stop();$('recFlag').textContent='PRÊT';$('recFlag').classList.remove('recording');for(const id of ['camToggle','camFlip','chooseVoix','chooseInstru','record','seek','formatPortrait','formatLandscape','formatToggle','recordMic'])$(id).disabled=false;if(current){$('chooseInstru').disabled=!hasAudio(current,'instrumental');$('chooseVoix').disabled=!hasAudio(current,'full');$('record').disabled=!hasAudio(current,mode)||!current.lyrics}}
 async function stopAll(){setImmersive(false);counting=false;await stopRecording();stopPlaying()}
 // Private container v1: "OKAJB1\n" + uint32BE(JSON manifest length) + JSON + raw audio blobs.
 // The catalogue on GitHub contains only public song titles. Local audio never goes through fetch().
@@ -430,6 +473,14 @@ $('play').onclick=async()=>{if(recording)return;if(playing)pause();else await pl
 $('songPlayer').onended=()=>{if(!recording)stopPlaying()};$('songPlayer').onloadedmetadata=()=>{if(!playing)updateReader(0)};
 $('seek').oninput=e=>{if(!recording&&current){$('songPlayer').currentTime=Number(e.target.value);updateReader(Number(e.target.value))}};
 for(const id of ['fontSize','start','duration','volume'])$(id).oninput=updateLabels;
+function nudgeLyrics(delta){
+ if(!current)return;
+ const input=$('start');input.value=String(Math.max(-10,Math.min(120,Math.round((Number(input.value)+delta)*10)/10)));
+ updateLabels();
+ writeStatus('Départ des paroles : '+Number(input.value).toFixed(1).replace('.',',')+' s. Mémorise le réglage pour ce titre si le résultat est bon.');
+}
+$('lyricsEarlier').onclick=()=>nudgeLyrics(-0.2);
+$('lyricsLater').onclick=()=>nudgeLyrics(0.2);
 $('rememberTiming').onclick=async()=>{if(!current)return;const[a,b]=timingKeys(mode);current[a]=Number($('start').value);current[b]=Number($('duration').value);await put(current);writeStatus('Réglage mémorisé pour cette version audio.')};
 $('backup').onclick=makeBackup;$('resetLibrary').onclick=resetLibrary;$('restore').onchange=async e=>{await restorePrivate(e.target.files[0]);e.target.value=''};
 async function init(){db=await openDB();try{await loadCatalog()}catch(e){console.warn('Catalogue:',e.message)}$('fontSize').value=36;updateLabels();selectVideoFormat('portrait');await renderSongs();
